@@ -139,8 +139,8 @@ public:
 
   DEAL_II_HOST_DEVICE void
   operator()(const typename Portable::MatrixFree<dim, Number>::Data *data,
-             const Portable::DeviceBlockVector<Number>              &src,
-             Portable::DeviceBlockVector<Number>                    &dst) const;
+             const Portable::DeviceVector<Number>                   &src,
+             Portable::DeviceVector<Number>                         &dst) const;
 };
 
 template <int dim,
@@ -149,14 +149,14 @@ template <int dim,
           typename Number,
           int n_q_points_1d>
 DEAL_II_HOST_DEVICE void
-VelocityCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>::operator()(
-  const typename Portable::MatrixFree<dim, Number>::Data *data,
-  const Portable::DeviceBlockVector<Number>              &src,
-  Portable::DeviceBlockVector<Number>                    &dst) const
+VelocityCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>::
+operator()(const typename Portable::MatrixFree<dim, Number>::Data *data,
+           const Portable::DeviceVector<Number>                   &src,
+           Portable::DeviceVector<Number>                         &dst) const
 {
   Portable::FEEvaluation<dim, degree_u, n_q_points_1d, dim> fe_u(data, 0);
 
-  fe_u.read_dof_values(src.block(0));
+  fe_u.read_dof_values(src);
   fe_u.evaluate(EvaluationFlags::gradients);
 
   data->for_each_quad_point([&](const int &q_point) {
@@ -165,17 +165,16 @@ VelocityCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>::operator()
   });
 
   fe_u.integrate(EvaluationFlags::gradients);
-  fe_u.distribute_local_to_global(dst.block(0));
+  fe_u.distribute_local_to_global(dst);
 }
 
-template <
-  int dim,
-  int degree_u,
-  int degree_p,
-  typename Number = double,
-  typename VectorType =
-    LinearAlgebra::distributed::BlockVector<double, MemorySpace::Default>,
-  int n_q_points_1d = degree_u + 1>
+template <int dim,
+          int degree_u,
+          int degree_p,
+          typename Number = double,
+          typename VectorType =
+            LinearAlgebra::distributed::Vector<double, MemorySpace::Default>,
+          int n_q_points_1d = degree_u + 1>
 class PortableMFVelocityOperator
 {
 public:
@@ -214,8 +213,8 @@ public:
 
   DEAL_II_HOST_DEVICE void
   operator()(const typename Portable::MatrixFree<dim, Number>::Data *data,
-             const Portable::DeviceBlockVector<Number>              &src,
-             Portable::DeviceBlockVector<Number>                    &dst) const;
+             const Portable::DeviceVector<Number>                   &src,
+             Portable::DeviceVector<Number>                         &dst) const;
 };
 
 template <int dim,
@@ -226,12 +225,12 @@ template <int dim,
 DEAL_II_HOST_DEVICE void
 MassCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>::operator()(
   const typename Portable::MatrixFree<dim, Number>::Data *data,
-  const Portable::DeviceBlockVector<Number>              &src,
-  Portable::DeviceBlockVector<Number>                    &dst) const
+  const Portable::DeviceVector<Number>                   &src,
+  Portable::DeviceVector<Number>                         &dst) const
 {
-  Portable::FEEvaluation<dim, degree_p, n_q_points_1d, 1>   fe_p(data, 1);
+  Portable::FEEvaluation<dim, degree_p, n_q_points_1d, 1> fe_p(data, 1);
 
-  fe_p.read_dof_values(src.block(1));
+  fe_p.read_dof_values(src);
   fe_p.evaluate(EvaluationFlags::values);
 
   data->for_each_quad_point([&](const int &q_point) {
@@ -239,17 +238,16 @@ MassCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>::operator()(
   });
 
   fe_p.integrate(EvaluationFlags::values);
-  fe_p.distribute_local_to_global(dst.block(1));
+  fe_p.distribute_local_to_global(dst);
 }
 
-template <
-  int dim,
-  int degree_u,
-  int degree_p,
-  typename Number = double,
-  typename VectorType =
-    LinearAlgebra::distributed::BlockVector<double, MemorySpace::Default>,
-  int n_q_points_1d = degree_u + 1>
+template <int dim,
+          int degree_u,
+          int degree_p,
+          typename Number = double,
+          typename VectorType =
+            LinearAlgebra::distributed::Vector<double, MemorySpace::Default>,
+          int n_q_points_1d = degree_u + 1>
 class PortableMFMassOperator
 {
 public:
@@ -377,7 +375,8 @@ test(unsigned int n_refinements)
   dof_u.distribute_dofs(fe_u);
   dof_p.distribute_dofs(fe_p);
 
-  std::cout << "refinement: " << n_refinements << ", n_dofs: " << dof_u.n_dofs()+dof_p.n_dofs() << std::endl;
+  std::cout << "refinement: " << n_refinements
+            << ", n_dofs: " << dof_u.n_dofs() + dof_p.n_dofs() << std::endl;
 
   const IndexSet &owned_set_u = dof_u.locally_owned_dofs();
   const IndexSet  relevant_set_u =
@@ -440,7 +439,8 @@ test(unsigned int n_refinements)
     solver(solver_control);
   solver.solve(stokes_operator, solution, rhs, PreconditionIdentity());
 
-  std::cout << "converged in " << solver_control.last_step() << " iterations" << std::endl;
+  std::cout << "converged in " << solver_control.last_step() << " iterations"
+            << std::endl;
 
   solution_host.block(0).import_elements(solution.block(0),
                                          VectorOperation::insert);
@@ -476,15 +476,14 @@ test(unsigned int n_refinements)
                                                         cellwise_errors_pl2,
                                                         VectorTools::L2_norm);
 
-  std::cout<< "velocity error: " << std::setprecision(2) << u_l2
-          << " pressure error: " << p_l2 << std::endl;
+  std::cout << "velocity error: " << std::setprecision(2) << u_l2
+            << " pressure error: " << p_l2 << std::endl;
 }
 
 int
 main(int argc, char **argv)
 {
-  Utilities::MPI::MPI_InitFinalize mpi_initialization(
-    argc, argv, 1);
+  Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
 
   unsigned int myid = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
 
