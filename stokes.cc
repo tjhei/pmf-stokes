@@ -39,8 +39,8 @@
 #include <deal.II/numerics/vector_tools.h>
 #include <deal.II/numerics/vector_tools_integrate_difference.h>
 
-#include "../tests.h"
 
+using namespace dealii;
 
 template <int dim>
 class VelocityRightHandSide : public Function<dim>
@@ -130,7 +130,7 @@ template <int dim,
           int degree_p,
           typename Number,
           int n_q_points_1d>
-class StokesOperator
+class StokesCellOperator
 {
 public:
   static const unsigned int n_q_points =
@@ -148,7 +148,7 @@ template <int dim,
           typename Number,
           int n_q_points_1d>
 DEAL_II_HOST_DEVICE void
-StokesOperator<dim, degree_u, degree_p, Number, n_q_points_1d>::operator()(
+StokesCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>::operator()(
   const typename Portable::MatrixFree<dim, Number>::Data *data,
   const Portable::DeviceBlockVector<Number>              &src,
   Portable::DeviceBlockVector<Number>                    &dst) const
@@ -199,7 +199,7 @@ public:
   vmult(VectorType &dst, const VectorType &src) const
   {
     dst = static_cast<Number>(0.);
-    StokesOperator<dim, degree_u, degree_p, Number, n_q_points_1d>
+    StokesCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>
       stokes_operator;
     data.cell_loop(stokes_operator, src, dst);
 
@@ -289,6 +289,8 @@ test(unsigned int n_refinements)
     solver(solver_control);
   solver.solve(stokes_operator, solution, rhs, PreconditionIdentity());
 
+  std::cout << "converged in " << solver_control.last_step() << " iterations" << std::endl;
+
   solution_host.block(0).import_elements(solution.block(0),
                                          VectorOperation::insert);
   solution_host.block(1).import_elements(solution.block(1),
@@ -323,8 +325,8 @@ test(unsigned int n_refinements)
                                                         cellwise_errors_pl2,
                                                         VectorTools::L2_norm);
 
-  deallog << "N refinement: " << n_refinements << "." << std::endl;
-  deallog << "velocity error: " << std::setprecision(2) << u_l2
+  std::cout << "N refinement: " << n_refinements << ", n_dofs: " << dof_u.n_dofs()+dof_p.n_dofs() << std::endl;
+  std::cout<< "velocity error: " << std::setprecision(2) << u_l2
           << " pressure error: " << p_l2 << std::endl;
 }
 
@@ -332,12 +334,10 @@ int
 main(int argc, char **argv)
 {
   Utilities::MPI::MPI_InitFinalize mpi_initialization(
-    argc, argv, testing_max_num_threads());
+    argc, argv, 1);
 
   unsigned int myid = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
-  deallog.push(Utilities::int_to_string(myid));
 
-  MPILogInitAll mpi_inilog;
 
   test<2, 1>(1);
   test<2, 1>(2);
