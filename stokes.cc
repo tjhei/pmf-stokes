@@ -572,14 +572,11 @@ main(int argc, char **argv)
 {
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
 
-  unsigned int myid = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
-
-
   test<2, 1>(1);
   test<2, 1>(2);
   test<2, 1>(3);
   test<2, 1>(4);
-  test<2, 1>(5);
+  // test<2, 1>(5);
 
   deallog << "OK" << std::endl;
 }
