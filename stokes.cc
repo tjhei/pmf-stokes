@@ -124,6 +124,155 @@ public:
 };
 
 
+// Velocity Block
+
+template <int dim,
+          int degree_u,
+          int degree_p,
+          typename Number,
+          int n_q_points_1d>
+class VelocityCellOperator
+{
+public:
+  static const unsigned int n_q_points =
+    dealii::Utilities::pow(n_q_points_1d, dim);
+
+  DEAL_II_HOST_DEVICE void
+  operator()(const typename Portable::MatrixFree<dim, Number>::Data *data,
+             const Portable::DeviceBlockVector<Number>              &src,
+             Portable::DeviceBlockVector<Number>                    &dst) const;
+};
+
+template <int dim,
+          int degree_u,
+          int degree_p,
+          typename Number,
+          int n_q_points_1d>
+DEAL_II_HOST_DEVICE void
+VelocityCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>::operator()(
+  const typename Portable::MatrixFree<dim, Number>::Data *data,
+  const Portable::DeviceBlockVector<Number>              &src,
+  Portable::DeviceBlockVector<Number>                    &dst) const
+{
+  Portable::FEEvaluation<dim, degree_u, n_q_points_1d, dim> fe_u(data, 0);
+
+  fe_u.read_dof_values(src.block(0));
+  fe_u.evaluate(EvaluationFlags::gradients);
+
+  data->for_each_quad_point([&](const int &q_point) {
+    const Tensor<2, dim, Number> gradient_u = fe_u.get_gradient(q_point);
+    fe_u.submit_gradient(gradient_u, q_point);
+  });
+
+  fe_u.integrate(EvaluationFlags::gradients);
+  fe_u.distribute_local_to_global(dst.block(0));
+}
+
+template <
+  int dim,
+  int degree_u,
+  int degree_p,
+  typename Number = double,
+  typename VectorType =
+    LinearAlgebra::distributed::BlockVector<double, MemorySpace::Default>,
+  int n_q_points_1d = degree_u + 1>
+class PortableMFVelocityOperator
+{
+public:
+  PortableMFVelocityOperator(const Portable::MatrixFree<dim, double> &data_in)
+    : data(data_in)
+  {}
+
+  const Portable::MatrixFree<dim, Number> &data;
+
+  void
+  vmult(VectorType &dst, const VectorType &src) const
+  {
+    dst = static_cast<Number>(0.);
+    VelocityCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>
+      velocity_operator;
+    data.cell_loop(velocity_operator, src, dst);
+
+    data.copy_constrained_values(src, dst);
+  }
+};
+
+
+
+// Mass Operator
+
+template <int dim,
+          int degree_u,
+          int degree_p,
+          typename Number,
+          int n_q_points_1d>
+class MassCellOperator
+{
+public:
+  static const unsigned int n_q_points =
+    dealii::Utilities::pow(n_q_points_1d, dim);
+
+  DEAL_II_HOST_DEVICE void
+  operator()(const typename Portable::MatrixFree<dim, Number>::Data *data,
+             const Portable::DeviceBlockVector<Number>              &src,
+             Portable::DeviceBlockVector<Number>                    &dst) const;
+};
+
+template <int dim,
+          int degree_u,
+          int degree_p,
+          typename Number,
+          int n_q_points_1d>
+DEAL_II_HOST_DEVICE void
+MassCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>::operator()(
+  const typename Portable::MatrixFree<dim, Number>::Data *data,
+  const Portable::DeviceBlockVector<Number>              &src,
+  Portable::DeviceBlockVector<Number>                    &dst) const
+{
+  Portable::FEEvaluation<dim, degree_p, n_q_points_1d, 1>   fe_p(data, 1);
+
+  fe_p.read_dof_values(src.block(1));
+  fe_p.evaluate(EvaluationFlags::values);
+
+  data->for_each_quad_point([&](const int &q_point) {
+    fe_p.submit_value(fe_p.get_value(q_point), q_point);
+  });
+
+  fe_p.integrate(EvaluationFlags::values);
+  fe_p.distribute_local_to_global(dst.block(1));
+}
+
+template <
+  int dim,
+  int degree_u,
+  int degree_p,
+  typename Number = double,
+  typename VectorType =
+    LinearAlgebra::distributed::BlockVector<double, MemorySpace::Default>,
+  int n_q_points_1d = degree_u + 1>
+class PortableMFMassOperator
+{
+public:
+  PortableMFMassOperator(const Portable::MatrixFree<dim, double> &data_in)
+    : data(data_in)
+  {}
+
+  const Portable::MatrixFree<dim, Number> &data;
+
+  void
+  vmult(VectorType &dst, const VectorType &src) const
+  {
+    dst = static_cast<Number>(0.);
+    MassCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>
+      mass_operator;
+    data.cell_loop(mass_operator, src, dst);
+
+    data.copy_constrained_values(src, dst);
+  }
+};
+
+// Stokes Operator
+
 
 template <int dim,
           int degree_u,
@@ -228,6 +377,8 @@ test(unsigned int n_refinements)
   dof_u.distribute_dofs(fe_u);
   dof_p.distribute_dofs(fe_p);
 
+  std::cout << "refinement: " << n_refinements << ", n_dofs: " << dof_u.n_dofs()+dof_p.n_dofs() << std::endl;
+
   const IndexSet &owned_set_u = dof_u.locally_owned_dofs();
   const IndexSet  relevant_set_u =
     DoFTools::extract_locally_relevant_dofs(dof_u);
@@ -325,7 +476,6 @@ test(unsigned int n_refinements)
                                                         cellwise_errors_pl2,
                                                         VectorTools::L2_norm);
 
-  std::cout << "N refinement: " << n_refinements << ", n_dofs: " << dof_u.n_dofs()+dof_p.n_dofs() << std::endl;
   std::cout<< "velocity error: " << std::setprecision(2) << u_l2
           << " pressure error: " << p_l2 << std::endl;
 }
