@@ -594,7 +594,7 @@ BlockSchurPreconditioner<AInvOperator, SInvOperator, BTOperator, VectorType>::
   // first apply the Schur Complement inverse operator.
   {
     S_inverse_operator.vmult(dst.block(1), src.block(1));
-    // dst.block(1) *= -1.0;
+    dst.block(1) *= -1.0;
   }
 
   // apply the top right block
@@ -725,7 +725,7 @@ test(unsigned int n_refinements)
   {
     typename SPreconditionerType::AdditionalData additional_data;
     additional_data.smoothing_range     = 15.;
-    additional_data.degree              = 5;
+    additional_data.degree              = 3;
     additional_data.eig_cg_n_iterations = 10;
     additional_data.constraints.copy_from(constraints_p);
     additional_data.preconditioner =
