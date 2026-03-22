@@ -143,6 +143,25 @@ public:
              Portable::DeviceVector<Number>                         &dst) const;
 };
 
+template <int dim, int fe_degree>
+class VelocityOperatorQuad
+{
+public:
+  DEAL_II_HOST_DEVICE void
+  operator()(
+    Portable::FEEvaluation<dim, fe_degree, fe_degree + 1, dim, double> *fe_eval,
+    const int q_point) const
+  {
+    const auto gradient_u = fe_eval->get_gradient(q_point);
+    fe_eval->submit_gradient(gradient_u, q_point);
+  }
+
+
+
+  static const unsigned int n_q_points =
+    dealii::Utilities::pow(fe_degree + 1, dim);
+};
+
 template <int dim,
           int degree_u,
           int degree_p,
@@ -154,15 +173,16 @@ operator()(const typename Portable::MatrixFree<dim, Number>::Data *data,
            const Portable::DeviceVector<Number>                   &src,
            Portable::DeviceVector<Number>                         &dst) const
 {
-  Portable::FEEvaluation<dim, degree_u, n_q_points_1d, dim> fe_u(data, 0);
+  Portable::FEEvaluation<dim, degree_u, n_q_points_1d, dim, double> fe_u(data,
+                                                                         0);
 
   fe_u.read_dof_values(src);
   fe_u.evaluate(EvaluationFlags::gradients);
 
-  data->for_each_quad_point([&](const int &q_point) {
-    const Tensor<2, dim, Number> gradient_u = fe_u.get_gradient(q_point);
-    fe_u.submit_gradient(gradient_u, q_point);
-  });
+  VelocityOperatorQuad<dim, degree_u> velocity_operator_quad;
+
+  data->for_each_quad_point(
+    [&](const int q_point) { velocity_operator_quad(&fe_u, q_point); });
 
   fe_u.integrate(EvaluationFlags::gradients);
   fe_u.distribute_local_to_global(dst);
@@ -175,14 +195,39 @@ template <int dim,
           typename VectorType =
             LinearAlgebra::distributed::Vector<double, MemorySpace::Default>,
           int n_q_points_1d = degree_u + 1>
-class PortableMFVelocityOperator
+class PortableMFVelocityOperator : public EnableObserverPointer
+
 {
 public:
   PortableMFVelocityOperator(const Portable::MatrixFree<dim, double> &data_in)
     : data(data_in)
   {}
 
-  const Portable::MatrixFree<dim, Number> &data;
+
+  types::global_dof_index
+  m() const
+  {
+    return data.get_vector_partitioner()->size();
+  }
+
+
+  std::shared_ptr<DiagonalMatrix<
+    LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>>
+  get_matrix_diagonal_inverse() const
+  {
+    return inverse_diagonal_entries;
+  }
+
+  double
+  el(const types::global_dof_index row, const types::global_dof_index col) const
+  {
+    (void)col;
+    Assert(row == col, ExcNotImplemented());
+    Assert(inverse_diagonal_entries.get() != nullptr &&
+             inverse_diagonal_entries->m() > 0,
+           ExcNotInitialized());
+    return 1.0 / (*inverse_diagonal_entries)(row, row);
+  }
 
   void
   vmult(VectorType &dst, const VectorType &src) const
@@ -194,11 +239,71 @@ public:
 
     data.copy_constrained_values(src, dst);
   }
+
+  void
+  compute_diagonal()
+  {
+    this->inverse_diagonal_entries.reset(
+      new DiagonalMatrix<
+        LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>());
+    LinearAlgebra::distributed::Vector<double, MemorySpace::Default>
+      &inverse_diagonal = inverse_diagonal_entries->get_vector();
+    // data.initialize_dof_vector(inverse_diagonal);
+
+    VelocityOperatorQuad<dim, degree_u> velocity_operator_quad;
+
+    MatrixFreeTools::compute_diagonal<dim, degree_u, degree_u + 1, dim, double>(
+      data,
+      inverse_diagonal,
+      velocity_operator_quad,
+      EvaluationFlags::gradients,
+      EvaluationFlags::gradients,
+      0 /*velocity*/);
+
+    double *raw_diagonal = inverse_diagonal.get_values();
+
+    Kokkos::parallel_for(
+      "invert A diagonal",
+      inverse_diagonal.locally_owned_size(),
+      KOKKOS_LAMBDA(int i) {
+        Assert(raw_diagonal[i] > 0.,
+               ExcMessage("No diagonal entry in a positive definite operator "
+                          "should be zero"));
+        raw_diagonal[i] = 1. / raw_diagonal[i];
+      });
+  }
+
+private:
+  const Portable::MatrixFree<dim, Number> &data;
+  std::shared_ptr<DiagonalMatrix<
+    LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>>
+    inverse_diagonal_entries;
 };
 
 
 
 // Mass Operator
+
+
+template <int dim,
+          int degree_u,
+          int degree_p,
+          typename Number,
+          int n_q_points_1d>
+class MassOperatorQuad
+{
+public:
+  static const unsigned int n_q_points =
+    dealii::Utilities::pow(n_q_points_1d, dim);
+
+  DEAL_II_HOST_DEVICE void
+  operator()(
+    Portable::FEEvaluation<dim, degree_p, n_q_points_1d, 1, Number> *fe_eval,
+    const int q_point) const
+  {
+    fe_eval->submit_value(fe_eval->get_value(q_point), q_point);
+  }
+};
 
 template <int dim,
           int degree_u,
@@ -248,14 +353,29 @@ template <int dim,
           typename VectorType =
             LinearAlgebra::distributed::Vector<double, MemorySpace::Default>,
           int n_q_points_1d = degree_u + 1>
-class PortableMFMassOperator
+class PortableMFMassOperator : public EnableObserverPointer
 {
 public:
   PortableMFMassOperator(const Portable::MatrixFree<dim, double> &data_in)
     : data(data_in)
   {}
 
-  const Portable::MatrixFree<dim, Number> &data;
+  types::global_dof_index
+  m() const
+  {
+    return data.get_vector_partitioner()->size();
+  }
+
+  double
+  el(const types::global_dof_index row, const types::global_dof_index col) const
+  {
+    (void)col;
+    Assert(row == col, ExcNotImplemented());
+    Assert(inverse_diagonal_entries.get() != nullptr &&
+             inverse_diagonal_entries->m() > 0,
+           ExcNotInitialized());
+    return 1.0 / (*inverse_diagonal_entries)(row, row);
+  }
 
   void
   vmult(VectorType &dst, const VectorType &src) const
@@ -267,6 +387,47 @@ public:
 
     data.copy_constrained_values(src, dst);
   }
+
+
+  void
+  compute_diagonal()
+  {
+    this->inverse_diagonal_entries.reset(
+      new DiagonalMatrix<
+        LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>());
+    LinearAlgebra::distributed::Vector<double, MemorySpace::Default>
+      &inverse_diagonal = inverse_diagonal_entries->get_vector();
+    // data.initialize_dof_vector(inverse_diagonal);
+
+    MassOperatorQuad<dim, degree_u, degree_p, Number, n_q_points_1d>
+      mass_operator_quad;
+
+    MatrixFreeTools::compute_diagonal<dim, degree_p, n_q_points_1d, 1, Number>(
+      data,
+      inverse_diagonal,
+      mass_operator_quad,
+      EvaluationFlags::values,
+      EvaluationFlags::values,
+      1 /* pressure */);
+
+    double *raw_diagonal = inverse_diagonal.get_values();
+
+    Kokkos::parallel_for(
+      "invert Mass diagonal",
+      inverse_diagonal.locally_owned_size(),
+      KOKKOS_LAMBDA(int i) {
+        Assert(raw_diagonal[i] > 0.,
+               ExcMessage("No diagonal entry in a positive definite operator "
+                          "should be zero"));
+        raw_diagonal[i] = 1. / raw_diagonal[i];
+      });
+  }
+
+private:
+  const Portable::MatrixFree<dim, Number> &data;
+  std::shared_ptr<DiagonalMatrix<
+    LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>>
+    inverse_diagonal_entries;
 };
 
 // Stokes Operator
@@ -426,7 +587,7 @@ BlockSchurPreconditioner<AInvOperator, SInvOperator, BTOperator, VectorType>::
   // first apply the Schur Complement inverse operator.
   {
     S_inverse_operator.vmult(dst.block(1), src.block(1));
-    dst.block(1) *= -1.0;
+    // dst.block(1) *= -1.0;
   }
 
   // apply the top right block
@@ -520,11 +681,58 @@ test(unsigned int n_refinements)
   rhs.block(0).import_elements(rhs_host.block(0), VectorOperation::insert);
   rhs.block(1).import_elements(rhs_host.block(1), VectorOperation::insert);
 
-  SolverControl solver_control(1000, 1e-4 * rhs.l2_norm());
+  SolverControl solver_control(1000, 1e-6 * rhs.l2_norm());
   SolverGMRES<
     LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default>>
     solver(solver_control);
-  solver.solve(stokes_operator, solution, rhs, PreconditionIdentity());
+
+  PreconditionIdentity identity;
+
+  PortableMFVelocityOperator<dim, degree_u, degree_p> A_operator(mf_data);
+  A_operator.compute_diagonal();
+
+  using APreconditionerType = PreconditionChebyshev<
+    PortableMFVelocityOperator<dim, degree_u, degree_p>,
+    LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>;
+
+  APreconditionerType preconditioner_A;
+  {
+    typename APreconditionerType::AdditionalData additional_data;
+    additional_data.smoothing_range     = 15.;
+    additional_data.degree              = 5;
+    additional_data.eig_cg_n_iterations = 10;
+    additional_data.constraints.copy_from(constraints_u);
+    additional_data.preconditioner = A_operator.get_matrix_diagonal_inverse();
+    preconditioner_A.initialize(A_operator, additional_data);
+  }
+
+
+  PortableMFMassOperator<dim, degree_u, degree_p> mass_operator(mf_data);
+  mass_operator.compute_diagonal();
+
+  using SPreconditionerType = PreconditionChebyshev<
+    PortableMFMassOperator<dim, degree_u, degree_p>,
+    LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>;
+
+  SPreconditionerType preconditioner_schur;
+  {
+    typename SPreconditionerType::AdditionalData additional_data;
+    additional_data.smoothing_range     = 15.;
+    additional_data.degree              = 5;
+    additional_data.eig_cg_n_iterations = 10;
+    additional_data.constraints.copy_from(constraints_p);
+    additional_data.preconditioner = nullptr;
+    preconditioner_schur.initialize(mass_operator, additional_data);
+  }
+
+  using VectorType =
+    LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default>;
+  BlockSchurPreconditioner<APreconditionerType,
+                           SPreconditionerType,
+                           PreconditionIdentity,
+                           VectorType>
+    preconditioner(preconditioner_A, preconditioner_schur, identity);
+  solver.solve(stokes_operator, solution, rhs, preconditioner);
 
   std::cout << "converged in " << solver_control.last_step() << " iterations"
             << std::endl;
@@ -576,7 +784,7 @@ main(int argc, char **argv)
   test<2, 1>(2);
   test<2, 1>(3);
   test<2, 1>(4);
-  // test<2, 1>(5);
+  test<2, 1>(5);
 
   deallog << "OK" << std::endl;
 }
