@@ -207,7 +207,7 @@ public:
   types::global_dof_index
   m() const
   {
-    return data.get_vector_partitioner()->size();
+    return data.get_vector_partitioner(0 /* velocity */)->size();
   }
 
 
@@ -237,7 +237,7 @@ public:
       velocity_operator;
     data.cell_loop(velocity_operator, src, dst);
 
-    data.copy_constrained_values(src, dst);
+    data.copy_constrained_values(src, dst, 0 /* velocity */);
   }
 
   void
@@ -248,7 +248,7 @@ public:
         LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>());
     LinearAlgebra::distributed::Vector<double, MemorySpace::Default>
       &inverse_diagonal = inverse_diagonal_entries->get_vector();
-    // data.initialize_dof_vector(inverse_diagonal);
+    data.initialize_dof_vector(inverse_diagonal, 0 /* velocity */);
 
     VelocityOperatorQuad<dim, degree_u> velocity_operator_quad;
 
@@ -363,7 +363,7 @@ public:
   types::global_dof_index
   m() const
   {
-    return data.get_vector_partitioner()->size();
+    return data.get_vector_partitioner(1 /* pressure */)->size();
   }
 
   double
@@ -385,9 +385,15 @@ public:
       mass_operator;
     data.cell_loop(mass_operator, src, dst);
 
-    data.copy_constrained_values(src, dst);
+    data.copy_constrained_values(src, dst, 1 /* pressure */);
   }
 
+  std::shared_ptr<DiagonalMatrix<
+    LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>>
+  get_matrix_diagonal_inverse() const
+  {
+    return inverse_diagonal_entries;
+  }
 
   void
   compute_diagonal()
@@ -397,7 +403,7 @@ public:
         LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>());
     LinearAlgebra::distributed::Vector<double, MemorySpace::Default>
       &inverse_diagonal = inverse_diagonal_entries->get_vector();
-    // data.initialize_dof_vector(inverse_diagonal);
+    // data.initialize_dof_vector(inverse_diagonal, 1 /* pressure */);
 
     MassOperatorQuad<dim, degree_u, degree_p, Number, n_q_points_1d>
       mass_operator_quad;
@@ -511,6 +517,7 @@ public:
       stokes_operator;
     data.cell_loop(stokes_operator, src, dst);
 
+    data.copy_constrained_values(src, dst);
     data.copy_constrained_values(src, dst);
   }
 };
@@ -721,7 +728,9 @@ test(unsigned int n_refinements)
     additional_data.degree              = 5;
     additional_data.eig_cg_n_iterations = 10;
     additional_data.constraints.copy_from(constraints_p);
-    additional_data.preconditioner = nullptr;
+    additional_data.preconditioner =
+      mass_operator.get_matrix_diagonal_inverse();
+    ;
     preconditioner_schur.initialize(mass_operator, additional_data);
   }
 
