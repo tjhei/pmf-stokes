@@ -908,6 +908,9 @@ main(int argc, char **argv)
   test<2, 1>(5);
   test<2, 1>(6);
   test<2, 1>(7);
+  test<2, 1>(8);
+  test<2, 1>(9);
+  test<2, 1>(10);
 
   deallog << "OK" << std::endl;
 }
