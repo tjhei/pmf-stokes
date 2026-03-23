@@ -850,10 +850,13 @@ test(unsigned int n_refinements)
                            PreconditionIdentity,
                            BlockVectorType>
     preconditioner(preconditioner_A, preconditioner_schur, identity);
-  solver.solve(stokes_operator, solution, rhs, preconditioner);
 
-  std::cout << "converged in " << solver_control.last_step() << " iterations"
-            << std::endl;
+  Kokkos::Timer t;
+  solver.solve(stokes_operator, solution, rhs, preconditioner);
+  double time = t.seconds();
+
+  std::cout << "converged in " << solver_control.last_step()
+            << " iterations in " << time << " seconds" << std::endl;
 
   solution_host.block(0).import_elements(solution.block(0),
                                          VectorOperation::insert);
