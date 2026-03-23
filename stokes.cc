@@ -16,6 +16,8 @@
 // DoFHandlers. Like stokes_01.cc, but actually solve the system with
 // a simple GMRES solver.
 
+#include <deal.II/distributed/fully_distributed_tria.h>
+#include <deal.II/distributed/repartitioning_policy_tools.h>
 #include <deal.II/distributed/tria.h>
 
 #include <deal.II/dofs/dof_handler.h>
@@ -35,6 +37,13 @@
 #include <deal.II/matrix_free/operators.h>
 #include <deal.II/matrix_free/portable_fe_evaluation.h>
 #include <deal.II/matrix_free/portable_matrix_free.h>
+
+#include <deal.II/multigrid/mg_coarse.h>
+#include <deal.II/multigrid/mg_matrix.h>
+#include <deal.II/multigrid/mg_smoother.h>
+#include <deal.II/multigrid/mg_transfer_global_coarsening.h>
+#include <deal.II/multigrid/mg_transfer_matrix_free.h>
+#include <deal.II/multigrid/multigrid.h>
 
 #include <deal.II/numerics/vector_tools.h>
 #include <deal.II/numerics/vector_tools_integrate_difference.h>
@@ -199,9 +208,23 @@ class PortableMFVelocityOperator : public EnableObserverPointer
 
 {
 public:
-  PortableMFVelocityOperator(const Portable::MatrixFree<dim, double> &data_in)
-    : data(data_in)
-  {}
+  void
+  reinit(const Mapping<dim>              &mapping,
+         const DoFHandler<dim>           &dof_handler,
+         const AffineConstraints<Number> &constraints,
+         const Quadrature<1>             &quadrature)
+  {
+    typename Portable::MatrixFree<dim, Number>::AdditionalData additional_data;
+    additional_data.mapping_update_flags = update_JxW_values | update_gradients;
+
+    data.reinit(mapping, dof_handler, constraints, quadrature, additional_data);
+  }
+
+  void
+  initialize_dof_vector(VectorType &vec) const
+  {
+    data.initialize_dof_vector(vec, 0 /* velocity */);
+  }
 
 
   types::global_dof_index
@@ -241,6 +264,15 @@ public:
   }
 
   void
+  Tvmult(VectorType &dst, const VectorType &src) const
+  {
+    AssertThrow(false, ExcNotImplemented());
+
+    (void)dst;
+    (void)src;
+  }
+
+  void
   compute_diagonal()
   {
     this->inverse_diagonal_entries.reset(
@@ -274,7 +306,7 @@ public:
   }
 
 private:
-  const Portable::MatrixFree<dim, Number> &data;
+  Portable::MatrixFree<dim, Number> data;
   std::shared_ptr<DiagonalMatrix<
     LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>>
     inverse_diagonal_entries;
@@ -695,23 +727,100 @@ test(unsigned int n_refinements)
 
   PreconditionIdentity identity;
 
-  PortableMFVelocityOperator<dim, degree_u, degree_p> A_operator(mf_data);
-  A_operator.compute_diagonal();
+  using VectorType =
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>;
+  using LevelMatrixType = PortableMFVelocityOperator<dim, degree_u, degree_p>;
+  using SmootherPreconditionerType = DiagonalMatrix<VectorType>;
+  using SmootherType               = PreconditionChebyshev<LevelMatrixType,
+                                             VectorType,
+                                             SmootherPreconditionerType>;
+  using MGTransferType =
+    MGTransferMatrixFree<dim, Number, MemorySpace::Default>;
 
-  using APreconditionerType = PreconditionChebyshev<
-    PortableMFVelocityOperator<dim, degree_u, degree_p>,
-    LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>;
+  const auto coarse_grid_triangulations =
+    MGTransferGlobalCoarseningTools::create_geometric_coarsening_sequence(tria);
 
-  APreconditionerType preconditioner_A;
-  {
-    typename APreconditionerType::AdditionalData additional_data;
-    additional_data.smoothing_range     = 15.;
-    additional_data.degree              = 5;
-    additional_data.eig_cg_n_iterations = 10;
-    additional_data.constraints.copy_from(constraints_u);
-    additional_data.preconditioner = A_operator.get_matrix_diagonal_inverse();
-    preconditioner_A.initialize(A_operator, additional_data);
-  }
+  const unsigned int min_level = 0;
+  const unsigned int max_level = coarse_grid_triangulations.size() - 1;
+
+  MGLevelObject<DoFHandler<dim>> mg_dof_handlers(min_level, max_level);
+  MGLevelObject<AffineConstraints<Number>> mg_constraints(min_level, max_level);
+  MGLevelObject<LevelMatrixType>           mg_matrices(min_level, max_level);
+
+  MGLevelObject<MGTwoLevelTransferCopyToHost<dim, VectorType>> mg_transfers(
+    min_level, max_level);
+
+  // level operators
+  for (unsigned int level = min_level; level <= max_level; ++level)
+    {
+      auto &dof_handler = mg_dof_handlers[level];
+      auto &constraint  = mg_constraints[level];
+
+      dof_handler.reinit(*coarse_grid_triangulations[level]);
+      dof_handler.distribute_dofs(fe_u);
+
+      constraint.reinit(dof_handler.locally_owned_dofs(),
+                        DoFTools::extract_locally_relevant_dofs(dof_handler));
+
+      DoFTools::make_zero_boundary_constraints(dof_handler, constraint);
+      constraint.close();
+
+      mg_matrices[level].reinit(mapping,
+                                dof_handler,
+                                constraint,
+                                quad.get_tensor_basis()[0]);
+    }
+
+  mg::Matrix<VectorType> mg_matrix(mg_matrices);
+
+  // transfer operator
+  for (unsigned int level = min_level; level < max_level; ++level)
+    mg_transfers[level + 1].reinit(mg_dof_handlers[level + 1],
+                                   mg_dof_handlers[level],
+                                   mg_constraints[level + 1],
+                                   mg_constraints[level]);
+
+  MGTransferType mg_transfer(mg_transfers, [&](const auto l, auto &vec) {
+    mg_matrices[l].initialize_dof_vector(vec);
+  });
+
+  // smoother
+  MGLevelObject<typename SmootherType::AdditionalData> smoother_data(min_level,
+                                                                     max_level);
+
+  for (unsigned int level = min_level; level <= max_level; ++level)
+    {
+      mg_matrices[level].compute_diagonal();
+      smoother_data[level].preconditioner =
+        std::make_shared<SmootherPreconditionerType>(
+          *mg_matrices[level].get_matrix_diagonal_inverse());
+      smoother_data[level].smoothing_range     = 20;
+      smoother_data[level].degree              = 5;
+      smoother_data[level].eig_cg_n_iterations = 20;
+      smoother_data[level].constraints.copy_from(mg_constraints[level]);
+    }
+
+  MGSmootherPrecondition<LevelMatrixType, SmootherType, VectorType> mg_smoother;
+  mg_smoother.initialize(mg_matrices, smoother_data);
+
+  for (unsigned int level = min_level; level <= max_level; ++level)
+    {
+      VectorType vec;
+      mg_matrices[level].initialize_dof_vector(vec);
+      mg_smoother.smoothers[level].estimate_eigenvalues(vec);
+    }
+
+  // coarse-grid solver
+  MGCoarseGridApplySmoother<VectorType> mg_coarse;
+  mg_coarse.initialize(mg_smoother);
+
+  // put everything together
+  Multigrid<VectorType> mg(
+    mg_matrix, mg_coarse, mg_transfer, mg_smoother, mg_smoother);
+
+  using APreconditionerType = PreconditionMG<dim, VectorType, MGTransferType>;
+  APreconditionerType preconditioner_A(dof_u, mg, mg_transfer);
+
 
 
   PortableMFMassOperator<dim, degree_u, degree_p> mass_operator(mf_data);
@@ -734,12 +843,12 @@ test(unsigned int n_refinements)
     preconditioner_schur.initialize(mass_operator, additional_data);
   }
 
-  using VectorType =
+  using BlockVectorType =
     LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default>;
   BlockSchurPreconditioner<APreconditionerType,
                            SPreconditionerType,
                            PreconditionIdentity,
-                           VectorType>
+                           BlockVectorType>
     preconditioner(preconditioner_A, preconditioner_schur, identity);
   solver.solve(stokes_operator, solution, rhs, preconditioner);
 
@@ -794,6 +903,8 @@ main(int argc, char **argv)
   test<2, 1>(3);
   test<2, 1>(4);
   test<2, 1>(5);
+  test<2, 1>(6);
+  test<2, 1>(7);
 
   deallog << "OK" << std::endl;
 }
