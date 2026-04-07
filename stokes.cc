@@ -31,7 +31,9 @@
 #include <deal.II/lac/affine_constraints.h>
 #include <deal.II/lac/la_parallel_block_vector.h>
 #include <deal.II/lac/precondition.h>
+#include <deal.II/lac/solver_bicgstab.h>
 #include <deal.II/lac/solver_gmres.h>
+#include <deal.II/lac/solver_idr.h>
 
 #include <deal.II/matrix_free/matrix_free.h>
 #include <deal.II/matrix_free/operators.h>
@@ -208,29 +210,32 @@ class PortableMFVelocityOperator : public EnableObserverPointer
 
 {
 public:
-  void
-  reinit(const Mapping<dim>              &mapping,
-         const DoFHandler<dim>           &dof_handler,
-         const AffineConstraints<Number> &constraints,
-         const Quadrature<1>             &quadrature)
-  {
-    typename Portable::MatrixFree<dim, Number>::AdditionalData additional_data;
-    additional_data.mapping_update_flags = update_JxW_values | update_gradients;
+  PortableMFVelocityOperator()
+  {}
 
-    data.reinit(mapping, dof_handler, constraints, quadrature, additional_data);
+  PortableMFVelocityOperator(
+    std::shared_ptr<Portable::MatrixFree<dim, Number>> data_in)
+    : data(data_in)
+  {}
+
+  void
+  reinit(std::shared_ptr<Portable::MatrixFree<dim, Number>> data_in)
+  {
+    data = data_in;
   }
+
 
   void
   initialize_dof_vector(VectorType &vec) const
   {
-    data.initialize_dof_vector(vec, 0 /* velocity */);
+    data->initialize_dof_vector(vec, 0 /* velocity */);
   }
 
 
   types::global_dof_index
   m() const
   {
-    return data.get_vector_partitioner(0 /* velocity */)->size();
+    return data->get_vector_partitioner(0 /* velocity */)->size();
   }
 
 
@@ -258,9 +263,9 @@ public:
     dst = static_cast<Number>(0.);
     VelocityCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>
       velocity_operator;
-    data.cell_loop(velocity_operator, src, dst);
+    data->cell_loop(velocity_operator, src, dst);
 
-    data.copy_constrained_values(src, dst, 0 /* velocity */);
+    data->copy_constrained_values(src, dst, 0 /* velocity */);
   }
 
   void
@@ -275,17 +280,18 @@ public:
   void
   compute_diagonal()
   {
+    Assert(data.get() != nullptr, ExcNotInitialized());
+
     this->inverse_diagonal_entries.reset(
       new DiagonalMatrix<
         LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>());
     LinearAlgebra::distributed::Vector<double, MemorySpace::Default>
       &inverse_diagonal = inverse_diagonal_entries->get_vector();
-    data.initialize_dof_vector(inverse_diagonal, 0 /* velocity */);
-
+    data->initialize_dof_vector(inverse_diagonal, 0 /* velocity */);
     VelocityOperatorQuad<dim, degree_u> velocity_operator_quad;
 
     MatrixFreeTools::compute_diagonal<dim, degree_u, degree_u + 1, dim, double>(
-      data,
+      *data.get(),
       inverse_diagonal,
       velocity_operator_quad,
       EvaluationFlags::gradients,
@@ -306,7 +312,7 @@ public:
   }
 
 private:
-  Portable::MatrixFree<dim, Number> data;
+  std::shared_ptr<Portable::MatrixFree<dim, Number>> data;
   std::shared_ptr<DiagonalMatrix<
     LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>>
     inverse_diagonal_entries;
@@ -687,29 +693,31 @@ test(unsigned int n_refinements)
   std::vector<const AffineConstraints<double> *> constraints = {&constraints_u,
                                                                 &constraints_p};
 
-  MappingQ<dim>                     mapping(fe_degree);
-  Portable::MatrixFree<dim, Number> mf_data;
-  const QGauss<1>                   quad(fe_degree + 2);
+  MappingQ<dim>                                      mapping(fe_degree);
+  std::shared_ptr<Portable::MatrixFree<dim, Number>> mf_data =
+    std::make_shared<Portable::MatrixFree<dim, Number>>();
+  const QGauss<1> quad(fe_degree + 2);
   typename Portable::MatrixFree<dim, Number>::AdditionalData additional_data;
   additional_data.mapping_update_flags = update_values | update_gradients |
                                          update_JxW_values |
                                          update_quadrature_points;
-  mf_data.reinit(mapping, dof_handlers, constraints, quad, additional_data);
+  mf_data->reinit(mapping, dof_handlers, constraints, quad, additional_data);
 
-  PortableMFStokesOperator<dim, degree_u, degree_p> stokes_operator(mf_data);
+  PortableMFStokesOperator<dim, degree_u, degree_p> stokes_operator(
+    *mf_data.get());
 
   LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default>
     solution;
-  mf_data.initialize_dof_vector(solution);
+  mf_data->initialize_dof_vector(solution);
   LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default> rhs;
-  mf_data.initialize_dof_vector(rhs);
+  mf_data->initialize_dof_vector(rhs);
 
   LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Host>
     solution_host;
-  mf_data.initialize_dof_vector(solution_host);
+  mf_data->initialize_dof_vector(solution_host);
 
   LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Host> rhs_host;
-  mf_data.initialize_dof_vector(rhs_host);
+  mf_data->initialize_dof_vector(rhs_host);
 
   VectorTools::create_right_hand_side(dof_u,
                                       QGauss<dim>(degree_u + 2),
@@ -721,7 +729,7 @@ test(unsigned int n_refinements)
   rhs.block(1).import_elements(rhs_host.block(1), VectorOperation::insert);
 
   SolverControl solver_control(1000, 1e-6 * rhs.l2_norm());
-  SolverGMRES<
+  SolverBicgstab<
     LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default>>
     solver(solver_control);
 
@@ -750,6 +758,9 @@ test(unsigned int n_refinements)
   MGLevelObject<MGTwoLevelTransferCopyToHost<dim, VectorType>> mg_transfers(
     min_level, max_level);
 
+  std::vector<std::shared_ptr<Portable::MatrixFree<dim, Number>>>
+    mf_data_levels;
+
   // level operators
   for (unsigned int level = min_level; level <= max_level; ++level)
     {
@@ -765,10 +776,21 @@ test(unsigned int n_refinements)
       DoFTools::make_zero_boundary_constraints(dof_handler, constraint);
       constraint.close();
 
-      mg_matrices[level].reinit(mapping,
-                                dof_handler,
-                                constraint,
-                                quad.get_tensor_basis()[0]);
+      typename Portable::MatrixFree<dim, Number>::AdditionalData
+        additional_data;
+      additional_data.mapping_update_flags =
+        update_JxW_values | update_gradients;
+      if (level == max_level)
+        mf_data_levels.emplace_back(mf_data);
+      else
+        {
+          mf_data_levels.emplace_back(
+            std::make_shared<Portable::MatrixFree<dim, Number>>());
+          mf_data_levels.back()->reinit(
+            mapping, dof_handler, constraint, quad, additional_data);
+        }
+
+      mg_matrices[level].reinit(mf_data_levels.back());
     }
 
   mg::Matrix<VectorType> mg_matrix(mg_matrices);
@@ -823,7 +845,7 @@ test(unsigned int n_refinements)
 
 
 
-  PortableMFMassOperator<dim, degree_u, degree_p> mass_operator(mf_data);
+  PortableMFMassOperator<dim, degree_u, degree_p> mass_operator(*mf_data.get());
   mass_operator.compute_diagonal();
 
   using SPreconditionerType = PreconditionChebyshev<
@@ -899,18 +921,12 @@ test(unsigned int n_refinements)
 int
 main(int argc, char **argv)
 {
-  Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
+  Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv);
 
-  test<2, 1>(1);
-  test<2, 1>(2);
-  test<2, 1>(3);
-  test<2, 1>(4);
-  test<2, 1>(5);
-  test<2, 1>(6);
-  test<2, 1>(7);
-  test<2, 1>(8);
-  test<2, 1>(9);
-  test<2, 1>(10);
+  test<3, 1>(8);
+
+  // for (int i = 1; i <= 15; ++i)
+  //   test<3, 1>(i);
 
   deallog << "OK" << std::endl;
 }
