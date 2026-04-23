@@ -786,9 +786,8 @@ test(unsigned int n_refinements)
     std::make_shared<Portable::MatrixFree<dim, Number>>();
   const QGauss<1> quad(fe_degree + 2);
   typename Portable::MatrixFree<dim, Number>::AdditionalData additional_data;
-  additional_data.mapping_update_flags = update_values | update_gradients |
-                                         update_JxW_values |
-                                         update_quadrature_points;
+  additional_data.mapping_update_flags = update_values | update_gradients;
+  // Not needed: update_quadrature_points;
   mf_data->reinit(mapping, dof_handlers, constraints, quad, additional_data);
 
   PortableMFStokesOperator<dim, degree_u, degree_p> stokes_operator(
