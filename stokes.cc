@@ -560,6 +560,92 @@ public:
   }
 };
 
+// BT Operator
+
+
+template <int dim,
+          int degree_u,
+          int degree_p,
+          typename Number,
+          int n_q_points_1d>
+class BTCellOperator
+{
+public:
+  static const unsigned int n_q_points =
+    dealii::Utilities::pow(n_q_points_1d, dim);
+
+  DEAL_II_HOST_DEVICE void
+  operator()(const typename Portable::MatrixFree<dim, Number>::Data *data,
+             const Portable::DeviceBlockVector<Number>              &src,
+             Portable::DeviceBlockVector<Number>                    &dst) const;
+};
+
+template <int dim,
+          int degree_u,
+          int degree_p,
+          typename Number,
+          int n_q_points_1d>
+DEAL_II_HOST_DEVICE void
+BTCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>::operator()(
+  const typename Portable::MatrixFree<dim, Number>::Data *data,
+  const Portable::DeviceBlockVector<Number>              &src,
+  Portable::DeviceBlockVector<Number>                    &dst) const
+{
+  Portable::FEEvaluation<dim, degree_u, n_q_points_1d, dim> fe_u(data, 0);
+  Portable::FEEvaluation<dim, degree_p, n_q_points_1d, 1>   fe_p(data, 1);
+
+  //  fe_u.read_dof_values(src.block(0));
+  fe_p.read_dof_values(src.block(1));
+  // fe_u.evaluate(EvaluationFlags::gradients);
+  fe_p.evaluate(EvaluationFlags::values);
+
+  data->for_each_quad_point([&](const int &q_point) {
+    // const Tensor<2, dim, Number> gradient_u = fe_u.get_gradient(q_point);
+    Tensor<2, dim, Number> vel_term; //   = gradient_u;
+    for (unsigned int d = 0; d < dim; ++d)
+      vel_term[d][d] -= fe_p.get_value(q_point);
+    fe_u.submit_gradient(vel_term, q_point);
+
+    // const Number pressure_term = trace(gradient_u);
+    // fe_p.submit_value(pressure_term, q_point);
+  });
+
+  fe_u.integrate(EvaluationFlags::gradients);
+  // fe_p.integrate(EvaluationFlags::values);
+  fe_u.distribute_local_to_global(dst.block(0));
+  // fe_p.distribute_local_to_global(dst.block(1));
+}
+
+template <
+  int dim,
+  int degree_u,
+  int degree_p,
+  typename Number = double,
+  typename VectorType =
+    LinearAlgebra::distributed::BlockVector<double, MemorySpace::Default>,
+  int n_q_points_1d = degree_u + 1>
+class PortableMFBTOperator
+{
+public:
+  PortableMFBTOperator(const Portable::MatrixFree<dim, double> &data_in)
+    : data(data_in)
+  {}
+
+  const Portable::MatrixFree<dim, Number> &data;
+
+  void
+  vmult(VectorType &dst, const VectorType &src) const
+  {
+    dst = static_cast<Number>(0.);
+    BTCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d> BT_operator;
+    data.cell_loop(BT_operator, src, dst);
+
+    data.copy_constrained_values(src, dst);
+    data.copy_constrained_values(src, dst);
+  }
+};
+
+
 
 // Preconditioner:
 
@@ -598,6 +684,7 @@ private:
    * References to the various operators this preconditioner works with.
    */
 
+  mutable VectorType  tmp;
   const AInvOperator &A_inverse_operator;
   const SInvOperator &S_inverse_operator;
   const BTOperator   &BT_operator;
@@ -627,7 +714,8 @@ void
 BlockSchurPreconditioner<AInvOperator, SInvOperator, BTOperator, VectorType>::
   vmult(VectorType &dst, const VectorType &src) const
 {
-  typename VectorType::BlockType utmp(src.block(0));
+  if (tmp.size() == 0)
+    tmp.reinit(src);
 
   // first apply the Schur Complement inverse operator.
   {
@@ -636,14 +724,14 @@ BlockSchurPreconditioner<AInvOperator, SInvOperator, BTOperator, VectorType>::
   }
 
   // apply the top right block
-  /*
-    {
-      BT_operator.vmult(utmp, dst.block(1)); // B^T or J^{up}
-      utmp *= -1.0;
-      utmp += src.block(0);
-    }
-  */
-  A_inverse_operator.vmult(dst.block(0), utmp);
+
+  {
+    BT_operator.vmult(tmp, dst); // B^T or J^{up}
+    tmp.block(0) *= -1.0;
+    tmp.block(0) += src.block(0);
+  }
+
+  A_inverse_operator.vmult(dst.block(0), tmp.block(0));
 }
 
 
@@ -865,13 +953,17 @@ test(unsigned int n_refinements)
     preconditioner_schur.initialize(mass_operator, additional_data);
   }
 
+  using BTOperatorType = PortableMFBTOperator<dim, degree_u, degree_p>;
+  BTOperatorType BT_operator(*mf_data.get());
+
+
   using BlockVectorType =
     LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default>;
   BlockSchurPreconditioner<APreconditionerType,
                            SPreconditionerType,
-                           PreconditionIdentity,
+                           BTOperatorType,
                            BlockVectorType>
-    preconditioner(preconditioner_A, preconditioner_schur, identity);
+    preconditioner(preconditioner_A, preconditioner_schur, BT_operator);
 
   Kokkos::Timer t;
   solver.solve(stokes_operator, solution, rhs, preconditioner);
@@ -923,10 +1015,10 @@ main(int argc, char **argv)
 {
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv);
 
-  test<3, 1>(8);
+  // test<3, 1>(3);
 
-  // for (int i = 1; i <= 15; ++i)
-  //   test<3, 1>(i);
+  for (int i = 1; i <= 15; ++i)
+    test<3, 1>(i);
 
   deallog << "OK" << std::endl;
 }
