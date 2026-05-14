@@ -51,6 +51,16 @@
 
 using namespace dealii;
 
+// Manufactured solution
+//
+// 2D: u = pi * sin^2(pi * x) * sin(2 * pi * y)
+//     v = -pi * sin(2 * pi * x) * sin^2(pi * y)
+//     p = cos(pi * x) * cos(pi * y)
+// 3D: u = pi * sin^2(pi * x) * sin^2(pi * y) * sin(2 * pi * z)
+//     v = -pi * sin(2 * pi * x) * sin^2(pi * y) * sin^2(pi * z)
+//     w = -pi * sin^2(pi * x) * sin(2 * pi * y) * sin^2(pi * z)
+//     p = cos(pi * x) * cos(pi * y) * cos(pi * z)
+
 template <int dim>
 class VelocityRightHandSide : public Function<dim>
 {
@@ -68,6 +78,8 @@ double
 VelocityRightHandSide<dim>::value(const Point<dim>  &p,
                                   const unsigned int component) const
 {
+  AssertIndexRange(component, dim);
+
   const double x   = p[0];
   const double y   = p[1];
   const double pi  = numbers::PI;
@@ -78,10 +90,48 @@ VelocityRightHandSide<dim>::value(const Point<dim>  &p,
   const double sy = std::sin(pi * y);
   const double cy = std::cos(pi * y);
 
-  if (component == 0)
-    return pi * cy * (16.0 * pi2 * sx * sx * sy - 4.0 * pi2 * sy - sx);
+  if constexpr (dim == 2)
+    {
+      if (component == 0)
+        return pi * cy * (16.0 * pi2 * sx * sx * sy - 4.0 * pi2 * sy - sx);
+      else
+        return pi * cx * (-16.0 * pi2 * sx * sy * sy + 4.0 * pi2 * sx - sy);
+    }
   else
-    return pi * cx * (-16.0 * pi2 * sx * sy * sy + 4.0 * pi2 * sx - sy);
+    {
+      const double z   = p[2];
+      const double sz  = std::sin(pi * z);
+      const double cz  = std::cos(pi * z);
+      const double sx2 = sx * sx;
+      const double sy2 = sy * sy;
+      const double sz2 = sz * sz;
+      const double cx2 = cx * cx;
+      const double cy2 = cy * cy;
+      const double cz2 = cz * cz;
+      const double pi3 = pi * pi2;
+
+      if (component == 0)
+        return -16.0 * pi3 * sx2 * sy2 * sz * cz +
+               16.0 * pi3 * sx2 * sy * sz2 * cy -
+               4.0 * pi3 * sx2 * sy * cy * cz2 +
+               4.0 * pi3 * sx2 * sz * cy2 * cz - pi * sx * cy * cz +
+               4.0 * pi3 * sy2 * sz * cx2 * cz -
+               4.0 * pi3 * sy * sz2 * cx2 * cy;
+      else if (component == 1)
+        return 16.0 * pi3 * sx2 * sy2 * sz * cz -
+               4.0 * pi3 * sx2 * sz * cy2 * cz -
+               16.0 * pi3 * sx * sy2 * sz2 * cx +
+               4.0 * pi3 * sx * sy2 * cx * cz2 +
+               4.0 * pi3 * sx * sz2 * cx * cy2 -
+               4.0 * pi3 * sy2 * sz * cx2 * cz - pi * sy * cx * cz;
+      else
+        return -16.0 * pi3 * sx2 * sy * sz2 * cy +
+               4.0 * pi3 * sx2 * sy * cy * cz2 +
+               16.0 * pi3 * sx * sy2 * sz2 * cx -
+               4.0 * pi3 * sx * sy2 * cx * cz2 -
+               4.0 * pi3 * sx * sz2 * cx * cy2 +
+               4.0 * pi3 * sy * sz2 * cx2 * cy - pi * sz * cx * cy;
+    }
 }
 
 template <int dim>
@@ -101,6 +151,8 @@ double
 VelocitySolution<dim>::value(const Point<dim>  &p,
                              const unsigned int component) const
 {
+  AssertIndexRange(component, dim);
+
   const double x  = p[0];
   const double y  = p[1];
   const double pi = numbers::PI;
@@ -110,10 +162,31 @@ VelocitySolution<dim>::value(const Point<dim>  &p,
   const double s2x = std::sin(2.0 * pi * x);
   const double s2y = std::sin(2.0 * pi * y);
 
-  if (component == 0)
-    return pi * sx * sx * s2y;
+  if constexpr (dim == 2)
+    {
+      if (component == 0)
+        return pi * sx * sx * s2y;
+      else
+        return -pi * s2x * sy * sy;
+    }
   else
-    return -pi * s2x * sy * sy;
+    {
+      const double z      = p[2];
+      const double sz     = std::sin(pi * z);
+      const double s2z    = std::sin(2.0 * pi * z);
+      const double sx2    = sx * sx;
+      const double sy2    = sy * sy;
+      const double sz2    = sz * sz;
+      const double dphidx = pi * s2x * sy2 * sz2;
+      const double dphidy = pi * s2y * sx2 * sz2;
+      const double dphidz = pi * s2z * sx2 * sy2;
+      if (component == 0)
+        return dphidy - dphidz;
+      else if (component == 1)
+        return dphidz - dphidx;
+      else
+        return dphidx - dphidy;
+    }
 }
 
 template <int dim>
@@ -128,7 +201,11 @@ public:
   value(const Point<dim> &p,
         const unsigned int /*component*/ = 0) const override
   {
-    return std::cos(numbers::PI * p[0]) * std::cos(numbers::PI * p[1]);
+    const double pi = numbers::PI;
+    if constexpr (dim == 2)
+      return std::cos(pi * p[0]) * std::cos(pi * p[1]);
+    else
+      return std::cos(pi * p[0]) * std::cos(pi * p[1]) * std::cos(pi * p[2]);
   }
 };
 
@@ -221,7 +298,6 @@ public:
   {
     data = data_in;
   }
-
 
   void
   initialize_dof_vector(VectorType &vec) const
