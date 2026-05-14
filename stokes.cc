@@ -834,8 +834,10 @@ test(unsigned int n_refinements)
   const auto coarse_grid_triangulations =
     MGTransferGlobalCoarseningTools::create_geometric_coarsening_sequence(tria);
 
-  const unsigned int min_level = 0;
   const unsigned int max_level = coarse_grid_triangulations.size() - 1;
+  // Do not go down to level 0, because this will lead to slower runtime as
+  // the problem becomes very small:
+  const unsigned int min_level = std::min(2U, max_level - 1);
 
   MGLevelObject<DoFHandler<dim>> mg_dof_handlers(min_level, max_level);
   MGLevelObject<AffineConstraints<Number>> mg_constraints(min_level, max_level);
@@ -923,8 +925,13 @@ test(unsigned int n_refinements)
   mg_coarse.initialize(mg_smoother);
 
   // put everything together
-  Multigrid<VectorType> mg(
-    mg_matrix, mg_coarse, mg_transfer, mg_smoother, mg_smoother);
+  Multigrid<VectorType> mg(mg_matrix,
+                           mg_coarse,
+                           mg_transfer,
+                           mg_smoother,
+                           mg_smoother,
+                           min_level,
+                           max_level);
 
   using APreconditionerType = PreconditionMG<dim, VectorType, MGTransferType>;
   APreconditionerType preconditioner_A(dof_u, mg, mg_transfer);
