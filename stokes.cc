@@ -819,8 +819,6 @@ test(unsigned int n_refinements)
     LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default>>
     solver(solver_control);
 
-  PreconditionIdentity identity;
-
   using VectorType =
     LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>;
   using LevelMatrixType = PortableMFVelocityOperator<dim, degree_u, degree_p>;
