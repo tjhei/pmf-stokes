@@ -12,9 +12,7 @@
 
 
 
-// Test Portable::MatrixFree with the Stokes operator using multiple
-// DoFHandlers. Like stokes_01.cc, but actually solve the system with
-// a simple GMRES solver.
+// Test Stokes problem with Portable::MatrixFree
 
 #include <deal.II/distributed/fully_distributed_tria.h>
 #include <deal.II/distributed/repartitioning_policy_tools.h>
@@ -441,7 +439,6 @@ public:
         LinearAlgebra::distributed::Vector<double, MemorySpace::Default>>());
     LinearAlgebra::distributed::Vector<double, MemorySpace::Default>
       &inverse_diagonal = inverse_diagonal_entries->get_vector();
-    // data.initialize_dof_vector(inverse_diagonal, 1 /* pressure */);
 
     MassOperatorQuad<dim, degree_u, degree_p, Number, n_q_points_1d>
       mass_operator_quad;
@@ -594,26 +591,18 @@ BTCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>::operator()(
   Portable::FEEvaluation<dim, degree_u, n_q_points_1d, dim> fe_u(data, 0);
   Portable::FEEvaluation<dim, degree_p, n_q_points_1d, 1>   fe_p(data, 1);
 
-  //  fe_u.read_dof_values(src.block(0));
   fe_p.read_dof_values(src.block(1));
-  // fe_u.evaluate(EvaluationFlags::gradients);
   fe_p.evaluate(EvaluationFlags::values);
 
   data->for_each_quad_point([&](const int &q_point) {
-    // const Tensor<2, dim, Number> gradient_u = fe_u.get_gradient(q_point);
-    Tensor<2, dim, Number> vel_term; //   = gradient_u;
+    Tensor<2, dim, Number> vel_term;
     for (unsigned int d = 0; d < dim; ++d)
       vel_term[d][d] -= fe_p.get_value(q_point);
     fe_u.submit_gradient(vel_term, q_point);
-
-    // const Number pressure_term = trace(gradient_u);
-    // fe_p.submit_value(pressure_term, q_point);
   });
 
   fe_u.integrate(EvaluationFlags::gradients);
-  // fe_p.integrate(EvaluationFlags::values);
   fe_u.distribute_local_to_global(dst.block(0));
-  // fe_p.distribute_local_to_global(dst.block(1));
 }
 
 template <
@@ -637,8 +626,9 @@ public:
   vmult(VectorType &dst, const VectorType &src) const
   {
     dst = static_cast<Number>(0.);
-    BTCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d> BT_operator;
-    data.cell_loop(BT_operator, src, dst);
+    BTCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>
+      cell_operator;
+    data.cell_loop(cell_operator, src, dst);
 
     data.copy_constrained_values(src, dst);
     data.copy_constrained_values(src, dst);
@@ -723,20 +713,20 @@ BlockSchurPreconditioner<AInvOperator, SInvOperator, BTOperator, VectorType>::
     dst.block(1) *= -1.0;
   }
 
-  // apply the top right block
-
+  // Apply the top right block:
   {
-    BT_operator.vmult(tmp, dst); // B^T or J^{up}
+    BT_operator.vmult(tmp, dst);
     tmp.block(0) *= -1.0;
     tmp.block(0) += src.block(0);
   }
 
+  // Finally the velocity block:
   A_inverse_operator.vmult(dst.block(0), tmp.block(0));
 }
 
 
 
-template <int dim, int pressure_degree>
+template <int dim, int degree_p>
 void
 test(unsigned int n_refinements)
 {
@@ -746,8 +736,7 @@ test(unsigned int n_refinements)
   GridGenerator::hyper_cube(tria);
   tria.refine_global(n_refinements);
 
-  const unsigned int degree_u = pressure_degree + 1;
-  const unsigned int degree_p = pressure_degree;
+  const unsigned int degree_u = degree_p + 1;
 
   FESystem<dim>   fe_u(FE_Q<dim>(degree_u), dim);
   FE_Q<dim>       fe_p(degree_p);
