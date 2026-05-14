@@ -553,7 +553,6 @@ public:
     data.cell_loop(stokes_operator, src, dst);
 
     data.copy_constrained_values(src, dst);
-    data.copy_constrained_values(src, dst);
   }
 };
 
@@ -597,7 +596,7 @@ BTCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>::operator()(
   data->for_each_quad_point([&](const int &q_point) {
     Tensor<2, dim, Number> vel_term;
     for (unsigned int d = 0; d < dim; ++d)
-      vel_term[d][d] -= fe_p.get_value(q_point);
+      vel_term[d][d] = -fe_p.get_value(q_point);
     fe_u.submit_gradient(vel_term, q_point);
   });
 
@@ -630,7 +629,6 @@ public:
       cell_operator;
     data.cell_loop(cell_operator, src, dst);
 
-    data.copy_constrained_values(src, dst);
     data.copy_constrained_values(src, dst);
   }
 };
