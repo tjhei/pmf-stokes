@@ -736,7 +736,7 @@ BlockSchurPreconditioner<AInvOperator, SInvOperator, BTOperator, VectorType>::
 
 
 
-template <int dim, int fe_degree>
+template <int dim, int pressure_degree>
 void
 test(unsigned int n_refinements)
 {
@@ -746,8 +746,8 @@ test(unsigned int n_refinements)
   GridGenerator::hyper_cube(tria);
   tria.refine_global(n_refinements);
 
-  const unsigned int degree_u = fe_degree + 1;
-  const unsigned int degree_p = fe_degree;
+  const unsigned int degree_u = pressure_degree + 1;
+  const unsigned int degree_p = pressure_degree;
 
   FESystem<dim>   fe_u(FE_Q<dim>(degree_u), dim);
   FE_Q<dim>       fe_p(degree_p);
@@ -781,13 +781,12 @@ test(unsigned int n_refinements)
   std::vector<const AffineConstraints<double> *> constraints = {&constraints_u,
                                                                 &constraints_p};
 
-  MappingQ<dim>                                      mapping(fe_degree);
+  MappingQ<dim>                                      mapping(degree_p);
   std::shared_ptr<Portable::MatrixFree<dim, Number>> mf_data =
     std::make_shared<Portable::MatrixFree<dim, Number>>();
-  const QGauss<1> quad(fe_degree + 2);
+  const QGauss<1>                                            quad(degree_p + 2);
   typename Portable::MatrixFree<dim, Number>::AdditionalData additional_data;
   additional_data.mapping_update_flags = update_values | update_gradients;
-  // Not needed: update_quadrature_points;
   mf_data->reinit(mapping, dof_handlers, constraints, quad, additional_data);
 
   PortableMFStokesOperator<dim, degree_u, degree_p> stokes_operator(
@@ -948,7 +947,7 @@ test(unsigned int n_refinements)
     additional_data.constraints.copy_from(constraints_p);
     additional_data.preconditioner =
       mass_operator.get_matrix_diagonal_inverse();
-    ;
+
     preconditioner_schur.initialize(mass_operator, additional_data);
   }
 
