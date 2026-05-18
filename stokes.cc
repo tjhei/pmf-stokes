@@ -796,28 +796,57 @@ BlockSchurPreconditioner<AInvOperator, SInvOperator, BTOperator, VectorType>::
 
 
 
-template <int dim, int degree_p>
-void
-test(unsigned int n_refinements)
+template <int dim, int degree_p, typename Number = double>
+class LaplaceProblem
 {
-  using Number = double;
+public:
+  static constexpr unsigned int degree_u = degree_p + 1;
 
-  parallel::distributed::Triangulation<dim> tria(MPI_COMM_WORLD);
-  GridGenerator::hyper_cube(tria);
-  tria.refine_global(n_refinements);
+  LaplaceProblem();
 
-  const unsigned int degree_u = degree_p + 1;
+  void
+  run();
 
-  FESystem<dim>   fe_u(FE_Q<dim>(degree_u), dim);
-  FE_Q<dim>       fe_p(degree_p);
-  DoFHandler<dim> dof_u(tria);
-  DoFHandler<dim> dof_p(tria);
+private:
+  void
+  setup_dofs();
+
+  void
+  solve();
+
+  parallel::distributed::Triangulation<dim> tria;
+
+  FESystem<dim> fe_u;
+  FE_Q<dim>     fe_p;
+
+  DoFHandler<dim> dof_u;
+  DoFHandler<dim> dof_p;
+};
+
+
+template <int dim, int degree_p, typename Number>
+LaplaceProblem<dim, degree_p, Number>::LaplaceProblem()
+  : tria(MPI_COMM_WORLD)
+  , fe_u(FE_Q<dim>(degree_p + 1), dim)
+  , fe_p(degree_p)
+  , dof_u(tria)
+  , dof_p(tria)
+{}
+
+template <int dim, int degree_p, typename Number>
+void
+LaplaceProblem<dim, degree_p, Number>::setup_dofs()
+{
   dof_u.distribute_dofs(fe_u);
   dof_p.distribute_dofs(fe_p);
+}
 
-  std::cout << "refinement: " << n_refinements
-            << ", n_dofs: " << dof_u.n_dofs() + dof_p.n_dofs() << std::endl;
 
+
+template <int dim, int degree_p, typename Number>
+void
+LaplaceProblem<dim, degree_p, Number>::solve()
+{
   const IndexSet &owned_set_u = dof_u.locally_owned_dofs();
   const IndexSet  relevant_set_u =
     DoFTools::extract_locally_relevant_dofs(dof_u);
@@ -1072,15 +1101,39 @@ test(unsigned int n_refinements)
             << " pressure error: " << p_l2 << std::endl;
 }
 
+template <int dim, int degree_p, typename Number>
+void
+LaplaceProblem<dim, degree_p, Number>::run()
+{
+  unsigned int n_refinements = 10;
+
+  for (unsigned int i = 0; i < n_refinements; ++i)
+    {
+      if (i == 0)
+        {
+          GridGenerator::hyper_cube(tria);
+          tria.refine_global(2);
+        }
+      else
+        {
+          tria.refine_global(1);
+        }
+      setup_dofs();
+
+      std::cout << "refinement: " << i
+                << ", n_dofs: " << dof_u.n_dofs() + dof_p.n_dofs() << std::endl;
+
+      solve();
+    }
+}
+
 int
 main(int argc, char **argv)
 {
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv);
 
-  // test<3, 1>(3);
-
-  for (int i = 1; i <= 15; ++i)
-    test<3, 1>(i);
-
-  deallog << "OK" << std::endl;
+  const unsigned int                    dim      = 3;
+  const unsigned int                    degree_p = 1;
+  LaplaceProblem<dim, degree_p, double> problem;
+  problem.run();
 }
