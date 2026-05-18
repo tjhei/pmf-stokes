@@ -360,6 +360,7 @@ public:
     LinearAlgebra::distributed::Vector<double, MemorySpace::Default>
       &inverse_diagonal = inverse_diagonal_entries->get_vector();
     data->initialize_dof_vector(inverse_diagonal, 0 /* velocity */);
+
     VelocityOperatorQuad<dim, degree_u> velocity_operator_quad;
 
     MatrixFreeTools::compute_diagonal<dim, degree_u, degree_u + 1, dim, double>(
@@ -714,13 +715,7 @@ template <class AInvOperator,
           class SInvOperator,
           class BTOperator,
           class VectorType>
-class BlockSchurPreconditioner : public
-#if DEAL_II_VERSION_GTE(9, 7, 0)
-                                 EnableObserverPointer
-#else
-                                 Subscriptor
-#endif
-
+class BlockSchurPreconditioner : public EnableObserverPointer
 {
 public:
   /**
