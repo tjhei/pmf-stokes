@@ -53,13 +53,16 @@ using namespace dealii;
 
 // Manufactured solution
 //
-// 2D: u = pi * sin^2(pi * x) * sin(2 * pi * y)
-//     v = -pi * sin(2 * pi * x) * sin^2(pi * y)
-//     p = cos(pi * x) * cos(pi * y)
-// 3D: u = pi * sin^2(pi * x) * sin^2(pi * y) * sin(2 * pi * z)
-//     v = -pi * sin(2 * pi * x) * sin^2(pi * y) * sin^2(pi * z)
-//     w = -pi * sin^2(pi * x) * sin(2 * pi * y) * sin^2(pi * z)
-//     p = cos(pi * x) * cos(pi * y) * cos(pi * z)
+// 2D:
+// u = pi * sx^2 * sin(2 * pi * y)
+// v = -pi * sin(2 * pi * x) * sy^2
+// p = cos(pi * x) * cos(pi * y)
+// 3D:
+// u = pi * sx^2 * (sz^2 * sin(2*pi*y) - sy^2 * sin(2*pi*z))
+// v = pi * sy^2 * (sx^2 * sin(2*pi*z) - sz^2 * sin(2*pi*x))
+// w = pi * sz^2 * (sy^2 * sin(2*pi*x) - sx^2 * sin(2*pi*y))
+//
+// where sx = sin(pi*x), sy = sin(pi*y), sz = sin(pi*z)
 
 template <int dim>
 class VelocityRightHandSide : public Function<dim>
