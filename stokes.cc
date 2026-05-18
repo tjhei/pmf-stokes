@@ -268,10 +268,10 @@ operator()(const typename Portable::MatrixFree<dim, Number>::Data *data,
   fe_u.read_dof_values(src);
   fe_u.evaluate(EvaluationFlags::gradients);
 
-  VelocityOperatorQuad<dim, degree_u> velocity_operator_quad;
+  VelocityOperatorQuad<dim, degree_u> quad_operation;
 
   data->for_each_quad_point(
-    [&](const int q_point) { velocity_operator_quad(&fe_u, q_point); });
+    [&](const int q_point) { quad_operation(&fe_u, q_point); });
 
   fe_u.integrate(EvaluationFlags::gradients);
   fe_u.distribute_local_to_global(dst);
@@ -453,9 +453,10 @@ MassCellOperator<dim, degree_u, degree_p, Number, n_q_points_1d>::operator()(
   fe_p.read_dof_values(src);
   fe_p.evaluate(EvaluationFlags::values);
 
-  data->for_each_quad_point([&](const int &q_point) {
-    fe_p.submit_value(fe_p.get_value(q_point), q_point);
-  });
+  MassOperatorQuad<dim, degree_u, degree_p, Number, n_q_points_1d>
+    quad_operation;
+  data->for_each_quad_point(
+    [&](const int &q_point) { quad_operation(&fe_p, q_point); });
 
   fe_p.integrate(EvaluationFlags::values);
   fe_p.distribute_local_to_global(dst);
@@ -520,12 +521,12 @@ public:
       &inverse_diagonal = inverse_diagonal_entries->get_vector();
 
     MassOperatorQuad<dim, degree_u, degree_p, Number, n_q_points_1d>
-      mass_operator_quad;
+      quad_operation;
 
     MatrixFreeTools::compute_diagonal<dim, degree_p, n_q_points_1d, 1, Number>(
       data,
       inverse_diagonal,
-      mass_operator_quad,
+      quad_operation,
       EvaluationFlags::values,
       EvaluationFlags::values,
       1 /* pressure */);
