@@ -244,11 +244,6 @@ public:
     const auto gradient_u = fe_eval->get_gradient(q_point);
     fe_eval->submit_gradient(gradient_u, q_point);
   }
-
-
-
-  static const unsigned int n_q_points =
-    dealii::Utilities::pow(fe_degree + 1, dim);
 };
 
 template <int dim,
@@ -408,9 +403,6 @@ template <int dim,
 class MassOperatorQuad
 {
 public:
-  static const unsigned int n_q_points =
-    dealii::Utilities::pow(n_q_points_1d, dim);
-
   DEAL_II_HOST_DEVICE void
   operator()(
     Portable::FEEvaluation<dim, degree_p, n_q_points_1d, 1, Number> *fe_eval,
