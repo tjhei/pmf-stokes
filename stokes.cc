@@ -897,7 +897,7 @@ LaplaceProblem<dim, degree_p, Number>::solve()
   rhs.block(0).import_elements(rhs_host.block(0), VectorOperation::insert);
   rhs.block(1).import_elements(rhs_host.block(1), VectorOperation::insert);
 
-  SolverControl solver_control(1000, 1e-6 * rhs.l2_norm());
+  SolverControl solver_control(1000, 1e-8 * rhs.l2_norm());
   SolverBicgstab<
     LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default>>
     solver(solver_control);
