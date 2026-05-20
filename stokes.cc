@@ -792,12 +792,12 @@ BlockSchurPreconditioner<AInvOperator, SInvOperator, BTOperator, VectorType>::
 
 
 template <int dim, int degree_p, typename Number = double>
-class LaplaceProblem
+class StokesProblem
 {
 public:
   static constexpr unsigned int degree_u = degree_p + 1;
 
-  LaplaceProblem();
+  StokesProblem();
 
   void
   run();
@@ -820,7 +820,7 @@ private:
 
 
 template <int dim, int degree_p, typename Number>
-LaplaceProblem<dim, degree_p, Number>::LaplaceProblem()
+StokesProblem<dim, degree_p, Number>::StokesProblem()
   : tria(MPI_COMM_WORLD)
   , fe_u(FE_Q<dim>(degree_p + 1), dim)
   , fe_p(degree_p)
@@ -830,7 +830,7 @@ LaplaceProblem<dim, degree_p, Number>::LaplaceProblem()
 
 template <int dim, int degree_p, typename Number>
 void
-LaplaceProblem<dim, degree_p, Number>::setup_dofs()
+StokesProblem<dim, degree_p, Number>::setup_dofs()
 {
   dof_u.distribute_dofs(fe_u);
   dof_p.distribute_dofs(fe_p);
@@ -840,7 +840,7 @@ LaplaceProblem<dim, degree_p, Number>::setup_dofs()
 
 template <int dim, int degree_p, typename Number>
 void
-LaplaceProblem<dim, degree_p, Number>::solve()
+StokesProblem<dim, degree_p, Number>::solve()
 {
   const IndexSet &owned_set_u = dof_u.locally_owned_dofs();
   const IndexSet  relevant_set_u =
@@ -1098,7 +1098,7 @@ LaplaceProblem<dim, degree_p, Number>::solve()
 
 template <int dim, int degree_p, typename Number>
 void
-LaplaceProblem<dim, degree_p, Number>::run()
+StokesProblem<dim, degree_p, Number>::run()
 {
   unsigned int n_refinements = 10;
 
@@ -1127,8 +1127,8 @@ main(int argc, char **argv)
 {
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv);
 
-  const unsigned int                    dim      = 3;
-  const unsigned int                    degree_p = 1;
-  LaplaceProblem<dim, degree_p, double> problem;
+  const unsigned int                   dim      = 3;
+  const unsigned int                   degree_p = 1;
+  StokesProblem<dim, degree_p, double> problem;
   problem.run();
 }
