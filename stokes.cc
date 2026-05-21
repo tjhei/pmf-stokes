@@ -898,9 +898,11 @@ StokesProblem<dim, degree_p, Number>::solve()
   rhs.block(1).import_elements(rhs_host.block(1), VectorOperation::insert);
 
   SolverControl solver_control(1000, 1e-8 * rhs.l2_norm());
-  SolverBicgstab<
-    LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default>>
-    solver(solver_control);
+  using BlockVectorType =
+    LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default>;
+  SolverGMRES<BlockVectorType> solver(
+    solver_control,
+    typename SolverGMRES<BlockVectorType>::AdditionalData(50, true));
 
   using VectorType =
     LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>;
