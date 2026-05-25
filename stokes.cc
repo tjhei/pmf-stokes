@@ -774,12 +774,15 @@ BlockSchurPreconditioner<AInvOperator, SInvOperator, BTOperator, VectorType>::
 
   // first apply the Schur Complement inverse operator.
   {
+    dst.block(1) = 0.0;
     S_inverse_operator.vmult(dst.block(1), src.block(1));
     dst.block(1) *= -1.0;
   }
 
   // Apply the top right block:
   {
+    // Zero out the velocity component of dst to remove uninitialized values:
+    dst.block(0) = 0.0;
     BT_operator.vmult(tmp, dst);
     tmp.block(0) *= -1.0;
     tmp.block(0) += src.block(0);
