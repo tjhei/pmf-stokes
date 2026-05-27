@@ -702,7 +702,7 @@ public:
       cell_operator;
     data.cell_loop(cell_operator, src, dst);
 
-    data.copy_constrained_values(src, dst);
+    data.set_constrained_values(0.0, dst.block(0), /* dof_handler_index */ 0);
   }
 };
 
@@ -781,8 +781,6 @@ BlockSchurPreconditioner<AInvOperator, SInvOperator, BTOperator, VectorType>::
 
   // Apply the top right block:
   {
-    // Zero out the velocity component of dst to remove uninitialized values:
-    dst.block(0) = 0.0;
     BT_operator.vmult(tmp, dst);
     tmp.block(0) *= -1.0;
     tmp.block(0) += src.block(0);
@@ -912,8 +910,8 @@ StokesProblem<dim, degree_p, Number>::solve()
   using LevelMatrixType = PortableMFVelocityOperator<dim, degree_u, degree_p>;
   using SmootherPreconditionerType = DiagonalMatrix<VectorType>;
   using SmootherType               = PreconditionChebyshev<LevelMatrixType,
-                                             VectorType,
-                                             SmootherPreconditionerType>;
+                                                           VectorType,
+                                                           SmootherPreconditionerType>;
   using MGTransferType =
     MGTransferMatrixFree<dim, Number, MemorySpace::Default>;
 
