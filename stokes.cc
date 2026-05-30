@@ -812,6 +812,8 @@ private:
 
   parallel::distributed::Triangulation<dim> tria;
 
+  MappingQ<dim> mapping;
+
   FESystem<dim> fe_u;
   FE_Q<dim>     fe_p;
 
@@ -823,6 +825,7 @@ private:
 template <int dim, int degree_p, typename Number>
 StokesProblem<dim, degree_p, Number>::StokesProblem()
   : tria(MPI_COMM_WORLD)
+  , mapping(1)
   , fe_u(FE_Q<dim>(degree_p + 1), dim)
   , fe_p(degree_p)
   , dof_u(tria)
@@ -865,7 +868,6 @@ StokesProblem<dim, degree_p, Number>::solve()
   std::vector<const AffineConstraints<double> *> constraints = {&constraints_u,
                                                                 &constraints_p};
 
-  MappingQ<dim>                                      mapping(degree_p);
   std::shared_ptr<Portable::MatrixFree<dim, Number>> mf_data =
     std::make_shared<Portable::MatrixFree<dim, Number>>();
   const QGauss<1>                                            quad(degree_p + 2);
