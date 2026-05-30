@@ -910,8 +910,8 @@ StokesProblem<dim, degree_p, Number>::solve()
   using LevelMatrixType = PortableMFVelocityOperator<dim, degree_u, degree_p>;
   using SmootherPreconditionerType = DiagonalMatrix<VectorType>;
   using SmootherType               = PreconditionChebyshev<LevelMatrixType,
-                                                           VectorType,
-                                                           SmootherPreconditionerType>;
+                                             VectorType,
+                                             SmootherPreconditionerType>;
   using MGTransferType =
     MGTransferMatrixFree<dim, Number, MemorySpace::Default>;
 
@@ -1001,7 +1001,12 @@ StokesProblem<dim, degree_p, Number>::solve()
     {
       VectorType vec;
       mg_matrices[level].initialize_dof_vector(vec);
-      mg_smoother.smoothers[level].estimate_eigenvalues(vec);
+      auto eigenvalue_info =
+        mg_smoother.smoothers[level].estimate_eigenvalues(vec);
+      std::cout << "\tlevel " << level
+                << " velocity block eigenvalue spectrum: [ "
+                << eigenvalue_info.min_eigenvalue_estimate << ", "
+                << eigenvalue_info.max_eigenvalue_estimate << " ]" << std::endl;
     }
 
   // coarse-grid solver
