@@ -802,12 +802,20 @@ public:
   void
   run();
 
+  using VectorType =
+    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>;
+  using BlockVectorType =
+    LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default>;
+
 private:
   void
   setup_dofs();
 
   void
   solve();
+
+  void
+  postprocess();
 
   parallel::distributed::Triangulation<dim> tria;
 
@@ -818,6 +826,13 @@ private:
 
   DoFHandler<dim> dof_u;
   DoFHandler<dim> dof_p;
+
+  AffineConstraints<double> constraints_u;
+  AffineConstraints<double> constraints_p;
+
+  std::shared_ptr<Portable::MatrixFree<dim, Number>> mf_data;
+  BlockVectorType                                    solution;
+  BlockVectorType                                    rhs;
 };
 
 
@@ -837,18 +852,11 @@ StokesProblem<dim, degree_p, Number>::setup_dofs()
 {
   dof_u.distribute_dofs(fe_u);
   dof_p.distribute_dofs(fe_p);
-}
 
-
-
-template <int dim, int degree_p, typename Number>
-void
-StokesProblem<dim, degree_p, Number>::solve()
-{
   const IndexSet &owned_set_u = dof_u.locally_owned_dofs();
   const IndexSet  relevant_set_u =
     DoFTools::extract_locally_relevant_dofs(dof_u);
-  AffineConstraints<double> constraints_u(owned_set_u, relevant_set_u);
+  constraints_u.reinit(owned_set_u, relevant_set_u);
   DoFTools::make_hanging_node_constraints(dof_u, constraints_u);
   VectorTools::interpolate_boundary_values(dof_u,
                                            0,
@@ -859,7 +867,8 @@ StokesProblem<dim, degree_p, Number>::solve()
   const IndexSet &owned_set_p = dof_p.locally_owned_dofs();
   const IndexSet  relevant_set_p =
     DoFTools::extract_locally_relevant_dofs(dof_p);
-  AffineConstraints<double> constraints_p(owned_set_p, relevant_set_p);
+
+  constraints_p.reinit(owned_set_p, relevant_set_p);
   DoFTools::make_hanging_node_constraints(dof_p, constraints_p);
   constraints_p.close();
 
@@ -867,47 +876,49 @@ StokesProblem<dim, degree_p, Number>::solve()
   std::vector<const AffineConstraints<double> *> constraints = {&constraints_u,
                                                                 &constraints_p};
 
-  std::shared_ptr<Portable::MatrixFree<dim, Number>> mf_data =
-    std::make_shared<Portable::MatrixFree<dim, Number>>();
+  mf_data = std::make_shared<Portable::MatrixFree<dim, Number>>();
+
   const QGauss<1>                                            quad(degree_p + 2);
   typename Portable::MatrixFree<dim, Number>::AdditionalData additional_data;
   additional_data.mapping_update_flags = update_values | update_gradients;
   mf_data->reinit(mapping, dof_handlers, constraints, quad, additional_data);
 
+
+  {
+    // create the right hand side:
+
+    LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Host> rhs_host;
+    mf_data->initialize_dof_vector(rhs_host);
+
+    VectorTools::create_right_hand_side(dof_u,
+                                        QGauss<dim>(degree_u + 2),
+                                        VelocityRightHandSide<dim>(),
+                                        rhs_host.block(0),
+                                        constraints_u);
+
+    mf_data->initialize_dof_vector(rhs);
+    rhs.block(0).import_elements(rhs_host.block(0), VectorOperation::insert);
+    rhs.block(1).import_elements(rhs_host.block(1), VectorOperation::insert);
+  }
+}
+
+
+
+template <int dim, int degree_p, typename Number>
+void
+StokesProblem<dim, degree_p, Number>::solve()
+{
   PortableMFStokesOperator<dim, degree_u, degree_p> stokes_operator(
     *mf_data.get());
 
-  LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default>
-    solution;
   mf_data->initialize_dof_vector(solution);
-  LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default> rhs;
-  mf_data->initialize_dof_vector(rhs);
-
-  LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Host>
-    solution_host;
-  mf_data->initialize_dof_vector(solution_host);
-
-  LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Host> rhs_host;
-  mf_data->initialize_dof_vector(rhs_host);
-
-  VectorTools::create_right_hand_side(dof_u,
-                                      QGauss<dim>(degree_u + 2),
-                                      VelocityRightHandSide<dim>(),
-                                      rhs_host.block(0),
-                                      constraints_u);
-
-  rhs.block(0).import_elements(rhs_host.block(0), VectorOperation::insert);
-  rhs.block(1).import_elements(rhs_host.block(1), VectorOperation::insert);
 
   SolverControl solver_control(1000, 1e-8 * rhs.l2_norm());
-  using BlockVectorType =
-    LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Default>;
+
   SolverGMRES<BlockVectorType> solver(
     solver_control,
     typename SolverGMRES<BlockVectorType>::AdditionalData(50, true));
 
-  using VectorType =
-    LinearAlgebra::distributed::Vector<Number, MemorySpace::Default>;
   using LevelMatrixType = PortableMFVelocityOperator<dim, degree_u, degree_p>;
   using SmootherPreconditionerType = DiagonalMatrix<VectorType>;
   using SmootherType               = PreconditionChebyshev<LevelMatrixType,
@@ -953,12 +964,15 @@ StokesProblem<dim, degree_p, Number>::solve()
         additional_data;
       additional_data.mapping_update_flags =
         update_JxW_values | update_gradients;
+
       if (level == max_level)
         mf_data_levels.emplace_back(mf_data);
       else
         {
+          const QGauss<1> quad(degree_p + 2);
           mf_data_levels.emplace_back(
             std::make_shared<Portable::MatrixFree<dim, Number>>());
+
           mf_data_levels.back()->reinit(
             mapping, dof_handler, constraint, quad, additional_data);
         }
@@ -998,14 +1012,15 @@ StokesProblem<dim, degree_p, Number>::solve()
   MGSmootherPrecondition<LevelMatrixType, SmootherType, VectorType> mg_smoother;
   mg_smoother.initialize(mg_matrices, smoother_data);
 
+  std::cout << "  velocity block:" << std::endl;
   for (unsigned int level = min_level; level <= max_level; ++level)
     {
       VectorType vec;
       mg_matrices[level].initialize_dof_vector(vec);
       auto eigenvalue_info =
         mg_smoother.smoothers[level].estimate_eigenvalues(vec);
-      std::cout << "\tlevel " << level
-                << " velocity block eigenvalue spectrum: [ "
+      std::cout << "    level: " << level << " n_dofs: " << vec.size()
+                << ", eigenvalue spectrum: [ "
                 << eigenvalue_info.min_eigenvalue_estimate << ", "
                 << eigenvalue_info.max_eigenvalue_estimate << " ]" << std::endl;
     }
@@ -1066,6 +1081,15 @@ StokesProblem<dim, degree_p, Number>::solve()
 
   std::cout << "converged in " << solver_control.last_step()
             << " iterations in " << time << " seconds" << std::endl;
+}
+
+template <int dim, int degree_p, typename Number>
+void
+StokesProblem<dim, degree_p, Number>::postprocess()
+{
+  LinearAlgebra::distributed::BlockVector<Number, MemorySpace::Host>
+    solution_host;
+  mf_data->initialize_dof_vector(solution_host);
 
   solution_host.block(0).import_elements(solution.block(0),
                                          VectorOperation::insert);
@@ -1124,12 +1148,15 @@ StokesProblem<dim, degree_p, Number>::run()
         }
       setup_dofs();
 
-      std::cout << "refinement: " << i
-                << ", n_dofs: " << dof_u.n_dofs() + dof_p.n_dofs() << std::endl;
+      std::cout << "\nrefinement: " << i
+                << ", n_dofs: " << dof_u.n_dofs() + dof_p.n_dofs() << " = "
+                << dof_u.n_dofs() << " + " << dof_p.n_dofs() << std::endl;
 
       solve();
+      postprocess();
     }
 }
+
 
 int
 main(int argc, char **argv)
