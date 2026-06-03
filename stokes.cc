@@ -1133,6 +1133,17 @@ template <int dim, int degree_p, typename Number>
 void
 StokesProblem<dim, degree_p, Number>::run()
 {
+  std::cout << "Running on " << Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)
+            << " MPI ranks and " << MultithreadInfo::n_threads()
+            << " threads in "
+#ifdef DEBUG
+            << "DEBUG mode" << std::endl
+#else
+            << "RELEASE mode" << std::endl
+#endif
+            << "dim: " << dim << std::endl
+            << "Element: Q" << degree_u << "-Q" << degree_p << std::endl;
+
   unsigned int n_refinements = 10;
 
   for (unsigned int i = 0; i < n_refinements; ++i)
