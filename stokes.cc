@@ -38,6 +38,8 @@
 #include <deal.II/matrix_free/portable_fe_evaluation.h>
 #include <deal.II/matrix_free/portable_matrix_free.h>
 
+#include <deal.II/base/conditional_ostream.h>
+
 #include <deal.II/multigrid/mg_coarse.h>
 #include <deal.II/multigrid/mg_matrix.h>
 #include <deal.II/multigrid/mg_smoother.h>
@@ -833,6 +835,7 @@ private:
   std::shared_ptr<Portable::MatrixFree<dim, Number>> mf_data;
   BlockVectorType                                    solution;
   BlockVectorType                                    rhs;
+  ConditionalOStream                                 pcout;
 };
 
 
@@ -844,6 +847,7 @@ StokesProblem<dim, degree_p, Number>::StokesProblem()
   , fe_p(degree_p)
   , dof_u(tria)
   , dof_p(tria)
+  , pcout(std::cout, Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
 {}
 
 template <int dim, int degree_p, typename Number>
@@ -1012,14 +1016,14 @@ StokesProblem<dim, degree_p, Number>::solve()
   MGSmootherPrecondition<LevelMatrixType, SmootherType, VectorType> mg_smoother;
   mg_smoother.initialize(mg_matrices, smoother_data);
 
-  std::cout << "  velocity block:" << std::endl;
+  pcout << "  velocity block:" << std::endl;
   for (unsigned int level = min_level; level <= max_level; ++level)
     {
       VectorType vec;
       mg_matrices[level].initialize_dof_vector(vec);
       auto eigenvalue_info =
         mg_smoother.smoothers[level].estimate_eigenvalues(vec);
-      std::cout << "    level: " << level << " n_dofs: " << vec.size()
+      pcout << "    level: " << level << " n_dofs: " << vec.size()
                 << ", eigenvalue spectrum: [ "
                 << eigenvalue_info.min_eigenvalue_estimate << ", "
                 << eigenvalue_info.max_eigenvalue_estimate << " ]" << std::endl;
@@ -1079,7 +1083,7 @@ StokesProblem<dim, degree_p, Number>::solve()
   solver.solve(stokes_operator, solution, rhs, preconditioner);
   double time = t.seconds();
 
-  std::cout << "converged in " << solver_control.last_step()
+  pcout << "converged in " << solver_control.last_step()
             << " iterations in " << time << " seconds" << std::endl;
 }
 
@@ -1125,7 +1129,7 @@ StokesProblem<dim, degree_p, Number>::postprocess()
                                                         cellwise_errors_pl2,
                                                         VectorTools::L2_norm);
 
-  std::cout << "velocity error: " << std::setprecision(2) << u_l2
+  pcout << "velocity error: " << std::setprecision(2) << u_l2
             << " pressure error: " << p_l2 << std::endl;
 }
 
@@ -1133,7 +1137,7 @@ template <int dim, int degree_p, typename Number>
 void
 StokesProblem<dim, degree_p, Number>::run()
 {
-  std::cout << "Running on " << Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)
+  pcout << "Running on " << Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)
             << " MPI ranks and " << MultithreadInfo::n_threads()
             << " threads in "
 #ifdef DEBUG
@@ -1159,7 +1163,7 @@ StokesProblem<dim, degree_p, Number>::run()
         }
       setup_dofs();
 
-      std::cout << "\nrefinement: " << i
+      pcout << "\nrefinement: " << i
                 << ", n_dofs: " << dof_u.n_dofs() + dof_p.n_dofs() << " = "
                 << dof_u.n_dofs() << " + " << dof_p.n_dofs() << std::endl;
 
