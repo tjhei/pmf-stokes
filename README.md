@@ -4,7 +4,7 @@
 | --------------- | ------------: | ----: | ---------: |
 | AMD W7800       |          1.41 | 32 GB |     1400 s |
 | NVIDIA RTX 6000 |          1.97 | 96 GB |      420 s |
-| NVIDIA H100     |          25.6 | 80 GB |          ? |
+| NVIDIA H100     |          25.6 | 80 GB |      210 s |
 
 
 * H100 scaling plot (single node)
