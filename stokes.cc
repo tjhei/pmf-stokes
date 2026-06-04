@@ -14,6 +14,8 @@
 
 // Test Stokes problem with Portable::MatrixFree
 
+#include <deal.II/base/conditional_ostream.h>
+
 #include <deal.II/distributed/fully_distributed_tria.h>
 #include <deal.II/distributed/repartitioning_policy_tools.h>
 #include <deal.II/distributed/tria.h>
@@ -37,8 +39,6 @@
 #include <deal.II/matrix_free/operators.h>
 #include <deal.II/matrix_free/portable_fe_evaluation.h>
 #include <deal.II/matrix_free/portable_matrix_free.h>
-
-#include <deal.II/base/conditional_ostream.h>
 
 #include <deal.II/multigrid/mg_coarse.h>
 #include <deal.II/multigrid/mg_matrix.h>
@@ -1024,9 +1024,9 @@ StokesProblem<dim, degree_p, Number>::solve()
       auto eigenvalue_info =
         mg_smoother.smoothers[level].estimate_eigenvalues(vec);
       pcout << "    level: " << level << " n_dofs: " << vec.size()
-                << ", eigenvalue spectrum: [ "
-                << eigenvalue_info.min_eigenvalue_estimate << ", "
-                << eigenvalue_info.max_eigenvalue_estimate << " ]" << std::endl;
+            << ", eigenvalue spectrum: [ "
+            << eigenvalue_info.min_eigenvalue_estimate << ", "
+            << eigenvalue_info.max_eigenvalue_estimate << " ]" << std::endl;
     }
 
   // coarse-grid solver
@@ -1083,8 +1083,8 @@ StokesProblem<dim, degree_p, Number>::solve()
   solver.solve(stokes_operator, solution, rhs, preconditioner);
   double time = t.seconds();
 
-  pcout << "converged in " << solver_control.last_step()
-            << " iterations in " << time << " seconds" << std::endl;
+  pcout << "converged in " << solver_control.last_step() << " iterations in "
+        << time << " seconds" << std::endl;
 }
 
 template <int dim, int degree_p, typename Number>
@@ -1130,7 +1130,7 @@ StokesProblem<dim, degree_p, Number>::postprocess()
                                                         VectorTools::L2_norm);
 
   pcout << "velocity error: " << std::setprecision(2) << u_l2
-            << " pressure error: " << p_l2 << std::endl;
+        << " pressure error: " << p_l2 << std::endl;
 }
 
 template <int dim, int degree_p, typename Number>
@@ -1138,15 +1138,14 @@ void
 StokesProblem<dim, degree_p, Number>::run()
 {
   pcout << "Running on " << Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)
-            << " MPI ranks and " << MultithreadInfo::n_threads()
-            << " threads in "
+        << " MPI ranks and " << MultithreadInfo::n_threads() << " threads in "
 #ifdef DEBUG
-            << "DEBUG mode" << std::endl
+        << "DEBUG mode" << std::endl
 #else
-            << "RELEASE mode" << std::endl
+        << "RELEASE mode" << std::endl
 #endif
-            << "dim: " << dim << std::endl
-            << "Element: Q" << degree_u << "-Q" << degree_p << std::endl;
+        << "dim: " << dim << std::endl
+        << "Element: Q" << degree_u << "-Q" << degree_p << std::endl;
 
   unsigned int n_refinements = 10;
 
@@ -1164,8 +1163,8 @@ StokesProblem<dim, degree_p, Number>::run()
       setup_dofs();
 
       pcout << "\nrefinement: " << i
-                << ", n_dofs: " << dof_u.n_dofs() + dof_p.n_dofs() << " = "
-                << dof_u.n_dofs() << " + " << dof_p.n_dofs() << std::endl;
+            << ", n_dofs: " << dof_u.n_dofs() + dof_p.n_dofs() << " = "
+            << dof_u.n_dofs() << " + " << dof_p.n_dofs() << std::endl;
 
       solve();
       postprocess();
